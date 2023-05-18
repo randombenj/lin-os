@@ -4,15 +4,16 @@ target/root.img: target/init
 	qemu-img create $@ 100M
 	mkfs.ext2 $@
 	e2mkdir $@:/dev
+	e2mkdir $@:/sys
 	e2mkdir $@:/proc
 	e2mkdir $@:/root
-	e2cp -P 755 init $@:/
+	e2cp -P 755 target/init $@:/
 
-target/init: target/debug/rustos
+target/init: target/debug/linμos
 	cp $< $@
 
-target/debug/rustos: export RUSTFLAGS = -C target-feature=+crt-static
-target/debug/rustos: $(shell find src)
+target/debug/linμos: export RUSTFLAGS = -C target-feature=+crt-static
+target/debug/linμos: $(shell find src)
 	cargo build
 
 run: target/root.img
