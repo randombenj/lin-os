@@ -5,6 +5,7 @@ target/root.img: target/init
 	mkfs.ext2 $@
 	e2mkdir $@:/dev
 	e2mkdir $@:/sys
+	e2mkdir $@:/tmp
 	e2mkdir $@:/proc
 	e2mkdir $@:/root
 	e2cp -P 755 target/init $@:/

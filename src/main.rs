@@ -6,10 +6,7 @@
 //! The main goal is to avoid the complexity of maintaining
 //! and patching a full blown linux distribution.
 
-
-pub mod filesystem;
-
-use std::fs;
+pub mod fs;
 
 use env_logger;
 use log::{debug, info};
@@ -27,7 +24,7 @@ struct Cmdline {
 /// The proc filesystem must be mounted before running
 /// this function.
 fn parse_cmdline() -> Cmdline {
-    let args = match fs::read_to_string("/proc/cmdline") {
+    let args = match std::fs::read_to_string("/proc/cmdline") {
         Ok(contents) => contents,
         Err(err) => panic!("Could not read /proc/cmdline: {:?}", err),
     };
@@ -52,7 +49,9 @@ fn parse_cmdline() -> Cmdline {
 
 fn main() {
     // -- parse kernel command line arguments
-    filesystem::mount::mount_proc();
+    if let Err(err) = fs::mount::proc() {
+        panic!("[panic] failed mounting filesystem: {}", err)
+    }
     let cmdline = parse_cmdline();
 
     // -- set up logging
@@ -61,10 +60,13 @@ fn main() {
         .write_style("LOG_STYLE");
     env_logger::init_from_env(env);
 
+    // -- system startup
     info!(" => starting linµos");
     debug!("{:?}", cmdline);
 
-    filesystem::mount::mount_filesystem(&cmdline.root);
+    if let Err(err) = fs::mountfs(&cmdline.root) {
+        panic!("[panic] failed mounting filesystem: {}", err)
+    }
 
     panic!("[panic] init tried to return!");
 }
