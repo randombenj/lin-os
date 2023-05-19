@@ -7,6 +7,7 @@
 //! and patching a full blown linux distribution.
 
 pub mod fs;
+pub mod net;
 
 use env_logger;
 use log::{debug, info};
@@ -66,6 +67,10 @@ fn main() {
 
     if let Err(err) = fs::mountfs(&cmdline.root) {
         panic!("[panic] failed mounting filesystem: {}", err)
+    }
+
+    if let Err(err) = net::configure_network() {
+        panic!("[panic] failed configuring network: {}", err)
     }
 
     panic!("[panic] init tried to return!");

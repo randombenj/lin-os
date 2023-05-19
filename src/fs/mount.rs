@@ -1,7 +1,6 @@
 use core::fmt;
 use std::path::Path;
 
-use log::debug;
 use nix::mount::{mount, MsFlags};
 
 #[derive(Debug, Clone)]
