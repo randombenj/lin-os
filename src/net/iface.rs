@@ -1,11 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr};
 
+use crate::net::dhcp;
+
 use super::{iface_config::ConfigSocket, NetworkError};
 
 #[derive(Debug)]
 pub struct NetworkInterface {
     pub name: String,
-    pub dhcp: bool,
     pub mac: Option<[u8; 6]>,
     pub ip: Option<IpAddr>,
     pub netmask: Option<IpAddr>,
@@ -37,7 +38,6 @@ pub fn get_network_interfaces() -> Result<Vec<NetworkInterface>, NetworkError> {
             None => {
                 let interface = NetworkInterface {
                     name: ifaddr.interface_name,
-                    dhcp: false,
                     mac: None,
                     ip: None,
                     netmask: None,
@@ -76,25 +76,14 @@ impl NetworkInterface {
     /// Configures to the given interface.
     /// This function will enable the interface and set the IP address.
     pub fn configure(&self) -> Result<(), NetworkError> {
-        let config = match ConfigSocket::new(self.name.clone()) {
-            Ok(config) => config,
-            Err(err) => return Err(err),
-        };
+        let config = ConfigSocket::new(self.name.clone())?;
+        config.enable(true)?;
 
-        if let Err(err) = config.enable(true) {
-            return Err(err);
-        }
-
-        // -- dhcp config
-        if self.dhcp {
-            todo!();
-        }
-
-        // -- static config
-        if let Some(ip) = self.ip {
-            if let Err(err) = config.set_ip(ip) {
-                return Err(err);
-            }
+        // configure ip address statically
+        // or via dhcp if no ip address is given
+        match self.ip {
+            Some(ip) => config.set_ip(ip)?,
+            None => dhcp::request(&self.name).unwrap(),
         }
 
         Ok(())

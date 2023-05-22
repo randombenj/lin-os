@@ -1,11 +1,9 @@
 pub mod err;
 pub mod dhcp;
 pub mod iface;
-pub mod service;
+pub mod networkd;
 
 mod iface_config;
 
-
-pub use service::configure_network;
+pub use networkd::configure_network;
 pub use err::NetworkError;
-

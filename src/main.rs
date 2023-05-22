@@ -9,6 +9,8 @@
 pub mod fs;
 pub mod net;
 
+use std::env;
+
 use env_logger;
 use log::{debug, info};
 
@@ -49,6 +51,7 @@ fn parse_cmdline() -> Cmdline {
 }
 
 fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
     // -- parse kernel command line arguments
     if let Err(err) = fs::mount::proc() {
         panic!("[panic] failed mounting filesystem: {}", err)
@@ -57,7 +60,7 @@ fn main() {
 
     // -- set up logging
     let env = env_logger::Env::new()
-        .filter_or("LOG", if cmdline.quiet { "warn" } else { "debug" })
+        .filter_or("LOG", if cmdline.quiet { "warn" } else { "trace" })
         .write_style("LOG_STYLE");
     env_logger::init_from_env(env);
 
