@@ -1,8 +1,8 @@
-use log::{debug, error, trace};
+use log::{debug, trace};
 use rand::{self, Rng};
 use std::{
     io::{self, Error},
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     time::{Duration, Instant},
 };
 
@@ -19,8 +19,22 @@ use pnet::{
     util::MacAddr,
 };
 
+use super::iface::StaticNetworkInterfaceConfig;
+
 pub const IPV4_HEADER_LENGTH: u8 = 20;
 
+/// Creates a default dhcpv4 message.
+///
+/// The message asks for the following options:
+/// - SubnetMask
+/// - Router
+/// - DomainNameServer
+/// - DomainName
+///
+/// # Arguments
+///
+/// * `mac` - The mac address of the interface.
+/// * `dhcp_message_type` - The type of the dhcp message.
 fn create_dhcpv4_message(mac: MacAddr, dhcp_message_type: v4::MessageType) -> v4::Message {
     // construct a new Message
     let chaddr = mac.octets();
@@ -44,8 +58,13 @@ fn create_dhcpv4_message(mac: MacAddr, dhcp_message_type: v4::MessageType) -> v4
     msg
 }
 
-
-
+/// Creates a dhcp udp packet from a dhcp message.
+///
+/// The packet is wrapped in an udp packet, ipv4 packet and then in an ethernet packet.
+///
+/// # Arguments
+///
+/// * `dhcp_message` - The dhcp message to put into an ethernet frame.
 fn create_dhcp_packet(dhcp_message: v4::Message) -> io::Result<EthernetPacket<'static>> {
     // the mac address is required to do a dhcp request
     let mac = dhcp_message.chaddr();
@@ -117,6 +136,14 @@ fn create_dhcp_packet(dhcp_message: v4::Message) -> io::Result<EthernetPacket<'s
     Ok(ethernet_packet.consume_to_immutable())
 }
 
+/// Receives a dhcp message from the given interface.
+///
+/// The message is received and then unwrapped from an ethernet frame,
+/// ipv4 frame and udp frame.
+///
+/// # Arguments
+///
+/// * `interface` - The interface to receive the message on.
 fn receive_message(interface: NetworkInterface) -> io::Result<v4::Message> {
     let (_, mut receiver) = match datalink::channel(&interface, Config::default()) {
         Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
@@ -186,6 +213,17 @@ fn receive_message(interface: NetworkInterface) -> io::Result<v4::Message> {
     Ok(msg)
 }
 
+/// Sends a DHCP discover message from the given interface.
+///
+/// See: https://www.ietf.org/rfc/rfc2131.txt
+///
+/// # Arguments
+///
+/// * `interface` - The interface to send the message from.
+///
+/// # Returns
+///
+/// * `io::Result<v4::Message>` - The DHCP offer message.
 fn dhcp_discover(interface: NetworkInterface) -> io::Result<v4::Message> {
     let mac = match interface.mac {
         Some(mac) => mac,
@@ -212,8 +250,23 @@ fn dhcp_discover(interface: NetworkInterface) -> io::Result<v4::Message> {
     Ok(msg)
 }
 
-
-fn dhcp_request(interface: NetworkInterface, discover_response: v4::Message) -> io::Result<v4::Message> {
+/// Sends a DHCP request message from the given interface.
+///
+/// See: https://www.ietf.org/rfc/rfc2131.txt
+///
+/// # Arguments
+///
+/// * `interface` - The interface to send the message from.
+/// * `discover_response` - The DHCP discover response message.
+///   Obtained from `dhcp_discover`.
+///
+/// # Returns
+///
+/// * `io::Result<v4::Message>` - The DHCP ack message.
+fn dhcp_request(
+    interface: NetworkInterface,
+    discover_response: v4::Message,
+) -> io::Result<v4::Message> {
     let mac = match interface.mac {
         Some(mac) => mac,
         None => return Err(Error::new(io::ErrorKind::NotFound, "No MAC address found")),
@@ -225,20 +278,19 @@ fn dhcp_request(interface: NetworkInterface, discover_response: v4::Message) -> 
         Err(err) => return Err(err),
     };
 
-
     // -- DHCP request message
     let mut msg = create_dhcpv4_message(mac, v4::MessageType::Request);
-    msg.opts_mut()
-        .insert(v4::DhcpOption::RequestedIpAddress(discover_response.yiaddr()));
+    msg.opts_mut().insert(v4::DhcpOption::RequestedIpAddress(
+        discover_response.yiaddr(),
+    ));
     msg.opts_mut()
         .insert(v4::DhcpOption::ServerIdentifier(discover_response.siaddr()));
-
 
     let dhcp_discover_packet = create_dhcp_packet(msg)?;
     let dhcp_discover_packet = dhcp_discover_packet.packet();
 
     sender.send_to(dhcp_discover_packet, Some(interface.clone()));
-    debug!("REQUEST from {}/{}", mac, discover_response.yiaddr());
+    debug!("REQUEST ip {} from {}", discover_response.yiaddr(), mac);
 
     let msg = receive_message(interface)?;
     trace!("REQUEST response: {}", msg);
@@ -246,7 +298,24 @@ fn dhcp_request(interface: NetworkInterface, discover_response: v4::Message) -> 
     Ok(msg)
 }
 
-pub fn request(iface_name: &String) -> io::Result<()> {
+/// Request an IP address from a DHCP server.
+///
+/// # Arguments
+///
+/// * `iface_name` - The name of the interface to request an IP address for.
+///
+/// # Example
+///
+/// ```rust
+/// use dhcp::request;
+///
+/// let iface_name = "eth0".to_string();
+/// let iface = request(&iface_name).unwrap();
+/// ```
+pub fn request(iface_name: &String) -> io::Result<StaticNetworkInterfaceConfig> {
+    // TODO: add some retry logic in case of faillures and timeouts
+
+    // check if the interface exists and is up
     let interface = match datalink::interfaces()
         .into_iter()
         .filter(|i| &i.name == iface_name)
@@ -260,9 +329,51 @@ pub fn request(iface_name: &String) -> io::Result<()> {
             ))
         }
     };
+    if !interface.is_up() {
+        return Err(Error::new(
+            io::ErrorKind::NotFound,
+            format!("Interface {} is not up", iface_name),
+        ));
+    }
 
+    // -- do the dhcp request
     let discover_response = dhcp_discover(interface.clone())?;
-    let _msg = dhcp_request(interface.clone(), discover_response)?;
+    let request_response = dhcp_request(interface.clone(), discover_response)?;
 
-    return Ok(());
+    // assemble a static network interface config
+    // from the dhcp response
+    let netmask = match request_response.opts().get(v4::OptionCode::SubnetMask) {
+        Some(v4::DhcpOption::SubnetMask(netmask)) => IpAddr::V4(*netmask),
+        _ => {
+            return Err(Error::new(
+                io::ErrorKind::NotFound,
+                format!("{}: no netmask returned by dhcp.", iface_name),
+            ))
+        }
+    };
+
+    let gateway = match request_response.opts().get(v4::OptionCode::Router) {
+        Some(v4::DhcpOption::Router(router)) => match router.first() {
+            Some(r) => IpAddr::V4(*r),
+            None => {
+                return Err(Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{}: no gateway returned by dhcp.", iface_name),
+                ))
+            }
+        },
+        _ => {
+            return Err(Error::new(
+                io::ErrorKind::NotFound,
+                format!("{}: no gateway returned by dhcp.", iface_name),
+            ))
+        }
+    };
+
+    return Ok(StaticNetworkInterfaceConfig {
+        name: interface.name,
+        ip: IpAddr::V4(request_response.yiaddr()),
+        netmask: netmask,
+        gateway: gateway,
+    });
 }

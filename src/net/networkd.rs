@@ -1,49 +1,50 @@
 /// Network configuration daemon.
-
 use std::net::{IpAddr, Ipv4Addr};
 
-use log::debug;
+use log::{debug, trace};
+use nix::errno::Errno;
+use pnet::datalink;
 
-use super::iface::{get_network_interfaces, NetworkInterface};
+use crate::net::iface::NetworkInterfaceConfigApply;
+
+use super::iface::{
+    DynamicNetworkInterfaceConfig, NetworkInterfaceConfig, StaticNetworkInterfaceConfig,
+};
 use super::NetworkError;
 
 pub fn configure_network() -> Result<(), NetworkError> {
-    // TODO: wait for carrier?
+    // TODO: read from config file
     let network_config = vec![
-        NetworkInterface {
+        NetworkInterfaceConfig::Static(StaticNetworkInterfaceConfig {
             name: "lo".to_string(),
-            mac: None, // set by kernel
-            ip: Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
-            netmask: Some(IpAddr::V4(Ipv4Addr::new(255, 0, 0, 0))),
-            gateway: Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
-        },
-        // NetworkInterface {
-        //     name: "eth0".to_string(),
-        //     dhcp: false,
-        //     mac: None, // set by kernel
-        //     ip: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))),
-        //     netmask: Some(IpAddr::V4(Ipv4Addr::new(55, 255, 255, 0))),
-        //     gateway: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
-        // },
-        NetworkInterface {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            netmask: IpAddr::V4(Ipv4Addr::new(255, 0, 0, 0)),
+            gateway: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        }),
+        NetworkInterfaceConfig::Dynamic(DynamicNetworkInterfaceConfig {
             name: "eth0".to_string(),
-            mac: None, // set by kernel
-            ip: None,
-            netmask: None,
-            gateway: None,
-        },
+        }),
     ];
 
-    for interface in &network_config {
-        debug!("configuring {:?}", interface);
-        if let Err(err) = interface.configure() {
-            return Err(err);
-        }
+    let (errors, _): (Vec<_>, Vec<_>) = network_config
+        .iter()
+        .map(|config| {
+            trace!("Applying config {:?}", config);
+            config.apply()
+        })
+        .partition(Result::is_err);
+
+    let errors: Vec<_> = errors.into_iter().map(Result::unwrap_err).collect();
+    if !errors.is_empty() {
+        return Err(NetworkError {
+            message: format!("Failed to configure network: {:?}", errors),
+            err: Errno::ENETDOWN,
+        });
     }
 
-    if let Ok(interfaces) = get_network_interfaces() {
-        debug!("configured interfaces: {:?}", interfaces);
-    }
+    datalink::interfaces().iter().for_each(|iface| {
+        debug!("Configured interfaces: {:?}", iface);
+    });
 
     Ok(())
 }

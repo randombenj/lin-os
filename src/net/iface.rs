@@ -1,90 +1,91 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 
-use crate::net::dhcp;
+use nix::errno::Errno;
 
 use super::{iface_config::ConfigSocket, NetworkError};
+use crate::net::dhcp;
 
 #[derive(Debug)]
-pub struct NetworkInterface {
+pub struct StaticNetworkInterfaceConfig {
     pub name: String,
-    pub mac: Option<[u8; 6]>,
-    pub ip: Option<IpAddr>,
-    pub netmask: Option<IpAddr>,
-    pub gateway: Option<IpAddr>,
+    pub ip: IpAddr,
+    pub netmask: IpAddr,
+    pub gateway: IpAddr,
 }
 
-/// Get a list of network interfaces
-/// that are actually configured on the system.
-pub fn get_network_interfaces() -> Result<Vec<NetworkInterface>, NetworkError> {
-    let mut interfaces: Vec<NetworkInterface> = Vec::new();
+#[derive(Debug)]
+pub struct DynamicNetworkInterfaceConfig {
+    pub name: String,
+}
 
-    let addrs = match nix::ifaddrs::getifaddrs() {
-        Ok(addrs) => addrs,
-        Err(err) => {
-            return Err(NetworkError {
-                message: "failed to get interface addresses".to_string(),
-                err: err,
-            });
-        }
-    };
+/// A network iface config, either static or dhcp.
+///
+/// This enum can contain either an [`StatcInterfaceConfig`] or a [`DynamicInterfaceConfig`], see their
+/// respective documentation for more details.
+///
+/// # Examples
+///
+/// ```
+/// let network_config = vec![
+///     NetworkInterfaceConfig::Static(StaticNetworkInterfaceConfig {
+///         name: "lo".to_string(),
+///         ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+///         netmask: IpAddr::V4(Ipv4Addr::new(255, 0, 0, 0)),
+///         gateway: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+///     }),
+///     NetworkInterfaceConfig::Dynamic(DynamicNetworkInterfaceConfig {
+///         name: "eth0".to_string(),
+///     }),
+/// ];
+///
+/// network_config.iter().for_each(|config| {
+///   config.apply();
+/// });
+/// ```
+#[derive(Debug)]
+pub enum NetworkInterfaceConfig {
+    Static(StaticNetworkInterfaceConfig),
+    Dynamic(DynamicNetworkInterfaceConfig),
+}
 
-    for ifaddr in addrs {
-        // -- find or create interface
-        let iface: &mut NetworkInterface = match interfaces
-            .iter_mut()
-            .find(|i| i.name == ifaddr.interface_name)
-        {
-            Some(iface) => iface,
-            None => {
-                let interface = NetworkInterface {
-                    name: ifaddr.interface_name,
-                    mac: None,
-                    ip: None,
-                    netmask: None,
-                    gateway: None,
-                };
-                interfaces.push(interface);
-                interfaces.last_mut().unwrap()
-            }
-        };
+pub trait NetworkInterfaceConfigApply {
+    fn apply(&self) -> Result<(), NetworkError>;
+}
 
-        // -- set interface properties
-        let address = match ifaddr.address {
-            Some(address) => address,
-            None => continue,
-        };
-
-        if let Some(ipv4) = address.as_sockaddr_in() {
-            let [a, b, c, d] = ipv4.ip().to_be_bytes();
-            iface.ip = Some(IpAddr::V4(Ipv4Addr::new(a, b, c, d)));
-        }
-
-        if let Some(_ipv6) = address.as_sockaddr_in6() {
-            // TODO: iface.ip = Some(IpAddr::V6(ipv6.ip().clone()));
-            continue;
-        }
-
-        if let Some(mac) = address.as_link_addr() {
-            iface.mac = mac.addr();
+impl NetworkInterfaceConfigApply for NetworkInterfaceConfig {
+    fn apply(&self) -> Result<(), NetworkError> {
+        match self {
+            NetworkInterfaceConfig::Static(config) => config.apply(),
+            NetworkInterfaceConfig::Dynamic(config) => config.apply(),
         }
     }
-
-    Ok(interfaces)
 }
 
-impl NetworkInterface {
-    /// Configures to the given interface.
-    /// This function will enable the interface and set the IP address.
-    pub fn configure(&self) -> Result<(), NetworkError> {
+impl NetworkInterfaceConfigApply for StaticNetworkInterfaceConfig {
+    fn apply(&self) -> Result<(), NetworkError> {
+        let config = ConfigSocket::new(self.name.clone())?;
+        config.enable(true)?;
+        config.set_ip(self.ip)?;
+
+        Ok(())
+    }
+}
+
+impl NetworkInterfaceConfigApply for DynamicNetworkInterfaceConfig {
+    fn apply(&self) -> Result<(), NetworkError> {
         let config = ConfigSocket::new(self.name.clone())?;
         config.enable(true)?;
 
-        // configure ip address statically
-        // or via dhcp if no ip address is given
-        match self.ip {
-            Some(ip) => config.set_ip(ip)?,
-            None => dhcp::request(&self.name).unwrap(),
-        }
+        let static_interface_config = match dhcp::request(&self.name) {
+            Ok(config) => config,
+            Err(_) => {
+                return Err(NetworkError {
+                    message: "failed to get dhcp config".to_string(),
+                    err: Errno::EFAULT,
+                });
+            }
+        };
+        static_interface_config.apply()?;
 
         Ok(())
     }
