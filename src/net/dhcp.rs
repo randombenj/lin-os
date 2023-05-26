@@ -358,7 +358,28 @@ pub fn request(iface_name: &String) -> io::Result<StaticNetworkInterfaceConfig> 
             None => {
                 return Err(Error::new(
                     io::ErrorKind::NotFound,
-                    format!("{}: no gateway returned by dhcp.", iface_name),
+                    format!("{}: no gateway found in dhcp response.", iface_name),
+                ))
+            }
+        },
+        _ => {
+            return Err(Error::new(
+                io::ErrorKind::NotFound,
+                format!("{}: no gateway returned by dhcp.", iface_name),
+            ))
+        }
+    };
+
+    let dns = match request_response
+        .opts()
+        .get(v4::OptionCode::DomainNameServer)
+    {
+        Some(v4::DhcpOption::DomainNameServer(dns)) => match dns.first() {
+            Some(r) => IpAddr::V4(*r),
+            None => {
+                return Err(Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{}: no gateway found in dhcp response.", iface_name),
                 ))
             }
         },
@@ -375,5 +396,6 @@ pub fn request(iface_name: &String) -> io::Result<StaticNetworkInterfaceConfig> 
         ip: IpAddr::V4(request_response.yiaddr()),
         netmask: netmask,
         gateway: gateway,
+        dns: Some(dns),
     });
 }

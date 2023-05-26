@@ -1,13 +1,25 @@
 use core::fmt;
+use std::error::Error;
 
 #[derive(Debug, Clone)]
-pub struct NetworkError {
-    pub message: String,
-    pub err: nix::Error,
+pub struct NetworkConfigurationError {
+    details: String,
 }
 
-impl fmt::Display for NetworkError {
+impl NetworkConfigurationError {
+    pub fn new(msg: String) -> NetworkConfigurationError {
+        NetworkConfigurationError{details: msg}
+    }
+}
+
+impl fmt::Display for NetworkConfigurationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "mount error: {} -> {}", self.message, self.err)
+        write!(f,"{}",self.details)
+    }
+}
+
+impl Error for NetworkConfigurationError {
+    fn description(&self) -> &str {
+        &self.details
     }
 }

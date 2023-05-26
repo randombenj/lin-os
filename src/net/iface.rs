@@ -1,8 +1,9 @@
 use std::net::IpAddr;
 
-use nix::errno::Errno;
-
-use super::{iface_config::ConfigSocket, NetworkError};
+use super::{
+    iface_config::{set_dns, ConfigSocket},
+    NetworkConfigurationError,
+};
 use crate::net::dhcp;
 
 #[derive(Debug)]
@@ -11,6 +12,7 @@ pub struct StaticNetworkInterfaceConfig {
     pub ip: IpAddr,
     pub netmask: IpAddr,
     pub gateway: IpAddr,
+    pub dns: Option<IpAddr>,
 }
 
 #[derive(Debug)]
@@ -49,11 +51,11 @@ pub enum NetworkInterfaceConfig {
 }
 
 pub trait NetworkInterfaceConfigApply {
-    fn apply(&self) -> Result<(), NetworkError>;
+    fn apply(&self) -> Result<(), NetworkConfigurationError>;
 }
 
 impl NetworkInterfaceConfigApply for NetworkInterfaceConfig {
-    fn apply(&self) -> Result<(), NetworkError> {
+    fn apply(&self) -> Result<(), NetworkConfigurationError> {
         match self {
             NetworkInterfaceConfig::Static(config) => config.apply(),
             NetworkInterfaceConfig::Dynamic(config) => config.apply(),
@@ -62,27 +64,41 @@ impl NetworkInterfaceConfigApply for NetworkInterfaceConfig {
 }
 
 impl NetworkInterfaceConfigApply for StaticNetworkInterfaceConfig {
-    fn apply(&self) -> Result<(), NetworkError> {
+    fn apply(&self) -> Result<(), NetworkConfigurationError> {
+        let iface = pnet::datalink::interfaces()
+            .into_iter()
+            .find(|iface| iface.name == self.name)
+            .ok_or_else(|| {
+                NetworkConfigurationError::new(format!("Interface '{}' not found", self.name))
+            })?;
+
         let config = ConfigSocket::new(self.name.clone())?;
         config.enable(true)?;
         config.set_ip(self.ip)?;
+        config.set_netmask(self.netmask)?;
+        if !iface.is_loopback() {
+            config.set_gateway(self.gateway)?;
+        }
+        if self.dns.is_some() {
+            set_dns(self.dns.unwrap())?;
+        }
 
         Ok(())
     }
 }
 
 impl NetworkInterfaceConfigApply for DynamicNetworkInterfaceConfig {
-    fn apply(&self) -> Result<(), NetworkError> {
+    fn apply(&self) -> Result<(), NetworkConfigurationError> {
         let config = ConfigSocket::new(self.name.clone())?;
         config.enable(true)?;
 
         let static_interface_config = match dhcp::request(&self.name) {
             Ok(config) => config,
-            Err(_) => {
-                return Err(NetworkError {
-                    message: "failed to get dhcp config".to_string(),
-                    err: Errno::EFAULT,
-                });
+            Err(err) => {
+                return Err(NetworkConfigurationError::new(format!(
+                    "DHCP config failed: {}",
+                    err
+                )))
             }
         };
         static_interface_config.apply()?;
