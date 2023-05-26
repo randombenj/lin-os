@@ -112,5 +112,18 @@ pub fn mountfs(root_disk: &str) -> Result<(), MountError> {
         });
     }
 
+    if let Err(err) = mount(
+        Some("cgroup2"),
+        Path::new("/sys/fs/cgroup"),
+        Some("cgroup2"),
+        MsFlags::empty(),
+        None::<&str>,
+    ) {
+        return Err(MountError {
+            mountpoint: "/sys/fs/cgroup".to_string(),
+            err: err,
+        });
+    }
+
     Ok(())
 }
