@@ -7,7 +7,7 @@ and patching a full-blown linux distribution when
 running a simple single binary application on a
 linux system (like rust/go/c ...).
 
-*linµos* consists of the following components:
+*xn-μ3q* consists of the following components:
 
  - Your application
  - The [linux kernel](kernel.org)
@@ -21,7 +21,7 @@ linux system (like rust/go/c ...).
 
 ## Development
 
-To test *linµos* in a virtual environment, we build a linux kernel:
+To test *xn-μ3q* in a virtual environment, we build a linux kernel:
 
 ```
 # inside the `linux` directory
@@ -29,7 +29,7 @@ make defconfig
 make -j$(nproc)
 ```
 
-Then we build and run the *linµos* system:
+Then we build and run the *xn-μ3q* system:
 
 ```
 KERNEL=../linux/kernel make run

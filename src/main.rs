@@ -9,7 +9,12 @@
 pub mod fs;
 pub mod net;
 
-use std::env;
+use std::{
+    env,
+    fs::File,
+    io,
+    process::{Command, Stdio},
+};
 
 use env_logger;
 use log::{debug, info};
@@ -50,6 +55,33 @@ fn parse_cmdline() -> Cmdline {
     }
 }
 
+fn exec(program: &str, args: &[&str], wait: bool, log: bool) -> io::Result<()> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+
+    if log {
+        let file = File::create("/var/log/syslog").unwrap();
+        let stdio = Stdio::from(file);
+
+        let file_err = File::create("/var/log/syslog").unwrap();
+        let sterr = Stdio::from(file_err);
+
+        cmd.stdout(stdio);
+        cmd.stderr(sterr);
+    }
+
+    let mut cmd = cmd.spawn()?;
+
+    if wait {
+        let status = cmd.wait()?;
+        if !status.success() {
+            eprintln!("{} ran, but indicated failure: {:?}", program, status);
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     env::set_var("RUST_BACKTRACE", "1");
     // -- parse kernel command line arguments
@@ -75,6 +107,11 @@ fn main() {
     if let Err(err) = net::configure_network() {
         panic!("[panic] failed configuring network: {}", err)
     }
+
+    std::env::set_current_dir("/").unwrap();
+    exec("/busybox", &["--install"], false, false).unwrap();
+    // exec("/k3s", &["server"], false, true).unwrap();
+    exec("/busybox", &["sh"], true, false).unwrap();
 
     panic!("[panic] init tried to return!");
 }

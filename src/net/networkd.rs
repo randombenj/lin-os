@@ -37,6 +37,14 @@ pub fn configure_network() -> Result<(), NetworkConfigurationError> {
         )));
     }
 
+    let hostname = "linµos";
+    if let Err(err) = fs::write("/etc/hostname", hostname) {
+        return Err(NetworkConfigurationError::new(format!(
+            "Failed configuring '/etc/hostname': {}",
+            err
+        )));
+    }
+
     for config in network_config {
         trace!("Applying config {:?}", config);
         if let Err(err) = config.apply() {
